@@ -1,0 +1,127 @@
+load "PETSc"
+load "iovtk"
+
+/* Solve 2D or 3D problem */
+macro dimension()3//
+include "macro_ddm.idp"
+include "RT_Instability_macros.idp"
+
+/* Domain geometry */
+real L = 1.0;       /* [m], Length */
+real H = 3.0*L;     /* [m], Heigth */
+
+/* Physical parameters */
+/* Atwood = (rho2 - rho1)/(rho2 + rho1) ~ 0.5 */
+real rho1 = 3e3;////0.5e3;      /* [kg/m^3], Density of first fluid, rho1 < rho2 */
+real rho2 = 1e3;//1.5e3;        /* [kg/m^3], Density of second fluid */
+real mu1 = 1e-3;                /* [Pa*s], Dynamic viscosity of first fluid */
+real mu2 = 1e-3;                /* [Pa*s], Dynamic viscosity of second fluid*/
+real g = 9.81;                  /* [m/s^2], Gravitational acceleration */
+real sigma = 72.86e-3;          /* [N/m], Surface tension coefficient */
+
+/* Initial conditions in .idp file for RTI */
+
+/* Boundary conditions in .idp file for RTI */
+
+/* Regularization parameter */
+real epsilon = 1e-8;//1e-10;    /* Regularization parameter for continuity equation */
+real epsilonH = 0.1; /* Regularization parameter for Heavyside function*/
+
+/* Function definition */
+func real Heavyside(real phi){
+    if(phi < -epsilonH){
+        return 0.0;
+    }else if(phi > epsilonH){
+        return 1.0;
+    }else{
+        return 0.5 * (1 + phi/epsilonH + 1/pi * sin(pi * phi / epsilonH));
+    }
+}
+
+func real dHdphi(real t) {
+    if(abs(t) > epsilonH)
+        return 0.0;
+    else
+        return 0.5*(1.0 + cos(pi*t/epsilonH))/epsilonH;
+}
+
+func real rho(real phi) {
+    return rho1 + (rho2 - rho1) * Heavyside(phi);
+}
+func real mu(real phi) {
+    return mu1 + (mu2 - mu1) * Heavyside(phi);
+}
+
+/* Time discretization */
+real t = 0.0;      /* [s], Time */
+real tMax = 20.0;  /* [s], Maximum simulation time */
+real dt = 0.1;     /* [s], Time step */
+
+/* Mesh definition in .idp file for RTI */
+int NN = 3; /*! <= 5 in 3D, so as not to blow up the PC !*/
+int labelFront = 3;
+int labelRight = 2;
+int labelBack = 3;
+int labelLeft = 2;
+int labelBottom = 1;
+int labelTop = 1;
+CreateMeshRTI(Th, NN);
+
+/* Fespace definition, some of it in .idp file for RTI */
+fespace Wh(Th, Pk);
+fespace Vh2(Th, P2);
+fespace Vh1(Th, P1);
+
+Wh defVec(U), defVec(UOld); /* Velocity */
+Wh defVec(V);               /* Test function */
+Vh2 phi, phiOld;            /* Level set function */
+Vh1 p, q;                   /* Pressure and test function */
+
+defVec(UOld) = defVec(U0);
+phiOld = phi0;
+
+problem NavierStocks(def(U, p), def(V, q)) =
+    intN(Th)(
+        /* Transport equation */
+        rho(phi)*defVec(U)' * defVec(V)
+        + dt*mu(phi)*(Grad(U) : Grad(V))
+        - dt*p*div(V)
+        /* Continuity equation */
+        + epsilon*p*q /* Penalty stabilization term */
+        + q*div(U)
+    )
+    + intN(Th)(
+        dt*(-fGrav(V))
+        - rho(phi)*convection(UOld)' * defVec(V)
+        /*Surface tension*/
+        - dt*(Tension(phi) : Grad(V))
+    )
+    + TopBottomBoundaries(U)
+    + SideBoundaries(U);
+
+
+real chkm ; /* Quality of the worst element in the mesh */
+real epsilonChek = 1e-10; /* Minimum authorized quality for an element in the mesh */
+
+while(t + dt < tMax){
+    t += dt;
+    phi = calcConvect(UOld, phiOld);
+    Vh2 h = Heavyside(phi);
+
+    NavierStocks;
+
+    /*chkm = checkmovemesh(Th,[x + dt * Ux, y + dt * Uy]);
+
+    if(chkm > epsilonChek){
+        Th = movemesh(Th,[x + dt * Ux, y + dt * Uy]);
+        Th = adaptmesh(Th, hmin = 0.01, hmax = 0.01);
+    }else{
+        cout << "Problem" <<endl;
+    }*/
+
+    defVec(UOld) = defVec(U);
+    phiOld = phi;
+
+    cout << "t = " + t << endl;
+    /*plot(h, fill = 1, value = 1, cmm="t = " + t);*/
+}
