@@ -1,25 +1,57 @@
 /* Domain geometry */
-real L = 0.2;       /* [m], Length */
-real H = 0.5;       /* [m], Half-heigth */
+real L = 1.0;       /* [m], Length */
+real H = 3 * L;       /* [m], Heigth */
 
 /* Physical parameters */
-real rho1 = 1e3;    /* [kg/m^3], Density of first fluid, rho1 < rho2 */
-real rho2 = 1.2e3;  /* [kg/m^3], Density of second fluid */
-real g = 9.81;      /* [m/s^2], Gravitational acceleration */
+/* Atwood = (rho2 - rho1)/(rho2 + rho1) ~ 0.5 */
+real rho1 = 3e3;////0.5e3;      /* [kg/m^3], Density of first fluid, rho1 < rho2 */
+real rho2 = 1e3;//1.5e3;        /* [kg/m^3], Density of second fluid */
+real mu1 = 1e-3;                /* [Pa*s], Dynamic viscosity of first fluid */
+real mu2 = 1e-3;                /* [Pa*s], Dynamic viscosity of second fluid*/
+real g = 9.81;                  /* [m/s^2], Gravitational acceleration */
 
-real u0 = 0.0;      /* [m/s], Initial velocity */
-real v0 = 0.0;      /* [m/s], Initial velocity */
-real t = 0.0;       /* [s], Time */
-real T = 1.0;       /* [s], Maximum simulation time */
-real dt = 0.01;     /* [s], Time step */
+/* Start condition */
+real Ux0 = 0.0;      /* [m/s], Initial velocity */
+real Uy0 = 0.0;      /* [m/s], Initial velocity */
+func phi0 = 1.5 + 0.2 * cos(0.5 * pi + pi * x) - y;//tanh(100 * (y - 2.0 - 0.1 * cos(2 * pi * x))/sqrt(2.0)); /* Initial interface surface */
 
-real ep = 1e-10;    /* Regularization parameter */
+/* Boundary condition */
+real UTopBottomx = 0.0;
+real UTopBottomy = 0.0;
+real URightLeftx = 0.0;
+
+/* Regularization parameter */
+real epsilon = 1e-8;//1e-10;    /* Regularization parameter for continuity equation */
+real epsilonH = 0.1; /* Regularization parameter for Heavyside function*/
+
+/* Function definition */
+func real Heavyside(real phi){
+    if(phi < -epsilonH){
+        return 0.0;
+    }else if(phi > epsilonH){
+        return 1.0;
+    }else{
+        return 0.5 * (1 + phi/epsilonH + 1/pi * sin(pi * phi / epsilonH));
+    }
+}
+
+func real rho(real phi){
+    return rho1 + (rho2 - rho1) * Heavyside(phi);
+}
+func real mu(real phi){
+    return mu1 + (mu2 - mu1) * Heavyside(phi);
+}
+
+/* Time discretization */
+real t = 0.0;      /* [s], Time */
+real tMax = 20.0;  /* [s], Maximum simulation time */
+real dt = 0.1;     /* [s], Time step */
 
 /* Mesh definition */
-int n = 10;
+int n = 15;
 real[int] xP = [0.0, L, L, 0.0];
-real[int] yP = [-H, -H, H, H];
-int[int] nGamma = [L/L, 2.0*H/L, L/L, 2.0*H/L]*n;
+real[int] yP = [0, 0, H, H];
+int[int] nGamma = [L/L, 2.0 * H/L, L/L, 2.0 * H/L] * n;
 
 int labelBottom = 1;
 int labelRight = 2;
@@ -30,15 +62,76 @@ int[int] labelGamma = [
     labelTop, labelLeft
 ];
 
-border GammaDomain( t = 0.0, 1.0; i ){
-    int iNext = (i+1)%nGamma.n;
-    x = xP[i]*(1.0 - t) + xP[iNext]*t;
-    y = yP[i]*(1.0 - t) + yP[iNext]*t;
+border GammaDomain(t = 0.0, 1.0; i){
+    int iNext = (i + 1) % nGamma.n;
+    real t1 = 1 - t;
+    x = xP[i] * t1 + xP[iNext] * t;
+    y = yP[i] * t1 + yP[iNext] * t;
     label = labelGamma[i];
 }
 
-mesh Th = buildmesh( GammaDomain(nGamma) );
-plot(Th);
+mesh Th = buildmesh(GammaDomain(nGamma));
 
 /* Differential operators */
-macro div(u, v) (dx(u) + dy(v)) //
+macro grad(u) [dx(u), dy(u)] // EOM
+
+macro Grad(U) [grad(U#x), grad(U#y)] // EOM
+
+macro div(U) (dx(U#x) + dy(U#y)) //EOM
+
+/* Fespace definition */
+fespace Vh2(Th,P2);
+fespace Vh1(Th,P1);
+
+Vh2 Ux, Uy, UOldx, UOldy, Vx, Vy; /* Velocity and test fucntion */
+Vh1 p, q; /* Pressure and test fucntion */
+Vh2 phi, phiOld; /* Surface interface */
+
+UOldx = Ux0;
+UOldy = Uy0;
+phiOld = phi0;
+
+problem NavierStocks([Ux, Uy, p], [Vx, Vy, q]) =
+    int2d(Th)(
+        /* Transport equation */
+        rho(phi) * [Ux, Uy]' * [Vx, Vy]
+        + dt * mu(phi) * (Grad(U) : Grad(V))
+        - dt * p * div(V)
+        /* Continuity equation */
+        - epsilon * p * q /* Penalty stabilization term */
+        - q * div(U)
+    )
+    + int2d(Th)(
+        dt * g * rho(phi) * Vy
+        -rho(phi) * [convect([UOldx, UOldy], -dt, UOldx), convect([UOldx, UOldy], -dt, UOldy)]' * [Vx, Vy]
+    )
+    + on(labelBottom, labelTop, Ux = UTopBottomx, Uy = UTopBottomy)
+    + on(labelLeft, labelRight, Ux = URightLeftx);
+
+
+real chkm ; /* Quality of the worst element in the mesh */
+real epsilonChek = 1e-10; /* Minimum authorized quality for an element in the mesh */
+
+while(t < tMax){
+
+    phi = convect([UOldx, UOldy], -dt, phiOld);
+    NavierStocks;
+
+    chkm = checkmovemesh(Th,[x + dt * Ux, y + dt * Uy]);
+
+    if(chkm > epsilonChek){
+        Th = movemesh(Th,[x + dt * Ux, y + dt * Uy]);
+        Th = adaptmesh(Th, hmin = 0.01, hmax = 0.01);
+    }else{
+        cout << "Problem" <<endl;
+    }
+
+    UOldx = Ux;
+    UOldy = Uy;
+    phiOld = phi;
+    t += dt;
+
+    Vh2 h = Heavyside(phi);
+    plot(h, fill = 1, value = 1);
+
+}
