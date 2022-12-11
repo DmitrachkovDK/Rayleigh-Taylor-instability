@@ -1,0 +1,149 @@
+/* Initial conditions */
+IFMACRO(dimension,2)
+real U0x = 0.0;     /* [m/s], Initial velocity */
+real U0y = 0.0;     /* [m/s], Initial velocity */
+/* Initial interface profile */
+func phi0 = 1.5 + 0.2*cos(0.5*pi + pi*x) - y;  
+/*tanh(100 * (y - 2.0 - 0.1*cos(2.0*pi*x))/sqrt(2.0));*/
+ENDIFMACRO
+IFMACRO(dimension,3)
+real U0x = 0.0;     /* [m/s], Initial velocity */
+real U0y = 0.0;     /* [m/s], Initial velocity */
+real U0z = 0.0;     /* [m/s], Initial velocity */
+/* Initial interface profile */
+func phi0 = 1.5 + 0.2*cos(0.5*pi + pi*sqrt(x^2+y^2)) - z;
+/*tanh(100 * (z - 2.0 - 0.1*cos(2.0*pi*sqrt(x^2+y^2)))/sqrt(2.0));*/
+ENDIFMACRO
+
+/* Boundary conditions */
+IFMACRO(dimension,2)
+real UTopBottomx = 0.0;
+real UTopBottomy = 0.0;
+real URightLeftx = 0.0;
+macro TopBottomBoundaries(U)on(labelBottom, labelTop,
+U#x = UTopBottomx, U#y = UTopBottomy)// EOM
+macro SideBoundaries(U)on(labelRight, labelLeft, U#x = URightLeftx)// EOM
+ENDIFMACRO
+IFMACRO(dimension,3)
+real UTopBottomx = 0.0;
+real UTopBottomy = 0.0;
+real UTopBottomz = 0.0;
+real URightLeftx = 0.0;
+real UFrontBacky = 0.0;
+macro TopBottomBoundaries(U)on(labelBottom, labelTop, 
+U#x = UTopBottomx, U#y = UTopBottomy, U#z = UTopBottomz)// EOM
+macro SideBoundaries(U)on(labelRight, labelLeft, U#x = URightLeftx)
++ on(labelFront, labelBack, U#y = UFrontBacky)// EOM
+ENDIFMACRO
+
+/* Macros for velocities, pressure and fespace initialization */
+IFMACRO(dimension,2)
+macro defVec(i)[i#x, i#y]// EOM
+macro def(i, j)[i#x, i#y, j]// EOM
+func Pk = [P2, P2];
+ENDIFMACRO
+IFMACRO(dimension,3)
+macro defVec(i)[i#x, i#y, i#z]// EOM
+macro def(i, j)[i#x, i#y, i#z, j]// EOM
+func Pk = [P2, P2, P2];
+ENDIFMACRO
+
+/* Macros for differential operators */
+IFMACRO(dimension,2)
+macro grad(u) [dx(u), dy(u)]// EOM
+macro Grad(U) [grad(U#x), grad(U#y)]// EOM
+macro div(U) (dx(U#x) + dy(U#y))// EOM
+ENDIFMACRO
+IFMACRO(dimension,3)
+macro grad(u) [dx(u), dy(u), dz(u)]// EOM
+macro Grad(U) [grad(U#x), grad(U#y), grad(U#z)]// EOM
+macro div(U) (dx(U#x) + dy(U#y) + dz(U#z))// EOM
+ENDIFMACRO
+
+/* Macros for mesh generation */
+IFMACRO(dimension,2)
+macro CreateMeshRTI(Th, NN)
+real[int] xP = [0.0, L, L, 0.0];
+real[int] yP = [0.0, 0.0, H, H];
+int[int] nGamma = [L/L, 2.0*H/L, L/L, 2.0*H/L]*NN;
+
+int[int] labelGamma = [
+    labelBottom, labelRight,
+    labelTop, labelLeft
+];
+
+border GammaDomain(t = 0.0, 1.0; i){
+    int iNext = (i + 1) % nGamma.n;
+    real t1 = 1 - t;
+    x = xP[i]*t1 + xP[iNext]*t;
+    y = yP[i]*t1 + yP[iNext]*t;
+    label = labelGamma[i];
+}
+mesh Th = buildmesh(GammaDomain(nGamma))// EOM
+ENDIFMACRO
+IFMACRO(dimension,3)
+macro CreateMeshRTI(Th, NN)
+int[int] Labels = [
+            labelFront, labelRight,
+            labelBack, labelLeft,
+            labelBottom, labelTop];
+meshN Th =
+    cube(
+        NN*L/L, NN*L/L, 2*NN*H/L,
+        [L*x, L*y, H*z],
+        label=Labels
+    )// EOM
+ENDIFMACRO
+
+/* Surface tension tensor */
+IFMACRO(dimension,2)
+macro ConvolutionTensor(PHI)[
+    [dx(PHI)*dx(PHI), dx(PHI)*dy(PHI)],
+    [dy(PHI)*dx(PHI), dy(PHI)*dy(PHI)]
+]// EOM
+macro Tension(PHI)sigma*dHdphi(PHI)*
+    (
+        [[1.0, 0.0],
+         [0.0, 1.0]]
+        - ConvolutionTensor(PHI)
+    )// EOM
+ENDIFMACRO
+IFMACRO(dimension,3)
+macro ConvolutionTensor(PHI)[
+    [dx(PHI)*dx(PHI), dx(PHI)*dy(PHI), dx(PHI)*dz(PHI)],
+    [dy(PHI)*dx(PHI), dy(PHI)*dy(PHI), dy(PHI)*dz(PHI)],
+    [dz(PHI)*dx(PHI), dz(PHI)*dy(PHI), dz(PHI)*dz(PHI)]
+]// EOM
+macro Tension(PHI)sigma*dHdphi(PHI)*
+    (
+        [[1.0, 0.0, 0.0],
+         [0.0, 1.0, 0.0],
+         [0.0, 0.0, 1.0]]
+        - ConvolutionTensor(PHI)
+    )// EOM
+ENDIFMACRO
+
+/* Gravitational force */
+IFMACRO(dimension,2)
+macro fGrav(V) (-g*rho(phi)*V#y)// EOM
+ENDIFMACRO
+IFMACRO(dimension,3)
+macro fGrav(V) (-g*rho(phi)*V#z)// EOM
+ENDIFMACRO
+
+/* Convective terms */
+IFMACRO(dimension,2)
+macro calcConvect(V, value)convect(defVec(V), -dt, value)// EOM
+macro convection(V) [
+    calcConvect(V, V#x),
+    calcConvect(V, V#y)
+]// EOM
+ENDIFMACRO
+IFMACRO(dimension,3)
+macro calcConvect(V, value) convect(defVec(V), -dt, value)// EOM
+macro convection(V) [
+    calcConvect(V, V#x),
+    calcConvect(V, V#y),
+    calcConvect(V, V#z)
+]// EOM
+ENDIFMACRO
