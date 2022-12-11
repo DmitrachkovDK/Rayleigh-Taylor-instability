@@ -1,0 +1,5 @@
+*.log
+input/
+output/
+.ipynb_checkpoints/
+*.pvd
