@@ -1,11 +1,14 @@
+load "iovtk"
+system("mkdir .\\output\\");
+
 /* Domain geometry */
 real L = 1.0;       /* [m], Length */
 real H = 3 * L;       /* [m], Heigth */
 
 /* Physical parameters */
 /* Atwood = (rho2 - rho1)/(rho2 + rho1) ~ 0.5 */
-real rho1 = 3e3;////0.5e3;      /* [kg/m^3], Density of first fluid, rho1 < rho2 */
-real rho2 = 1e3;//1.5e3;        /* [kg/m^3], Density of second fluid */
+real rho1 = 3;//0.5e3;      /* [kg/m^3], Density of first fluid, rho1 < rho2 */
+real rho2 = 1;//1.5e3;        /* [kg/m^3], Density of second fluid */
 real mu1 = 1e-3;                /* [Pa*s], Dynamic viscosity of first fluid */
 real mu2 = 1e-3;                /* [Pa*s], Dynamic viscosity of second fluid*/
 real g = 9.81;                  /* [m/s^2], Gravitational acceleration */
@@ -22,7 +25,7 @@ real URightLeftx = 0.0;
 
 /* Regularization parameter */
 real epsilon = 1e-8;//1e-10;    /* Regularization parameter for continuity equation */
-real epsilonH = 0.1; /* Regularization parameter for Heavyside function*/
+real epsilonH = 0.05; /* Regularization parameter for Heavyside function*/
 
 /* Function definition */
 func real Heavyside(real phi){
@@ -38,17 +41,19 @@ func real Heavyside(real phi){
 func real rho(real phi){
     return rho1 + (rho2 - rho1) * Heavyside(phi);
 }
+
 func real mu(real phi){
     return mu1 + (mu2 - mu1) * Heavyside(phi);
 }
 
 /* Time discretization */
 real t = 0.0;      /* [s], Time */
-real tMax = 20.0;  /* [s], Maximum simulation time */
+real tMax = 2.0;  /* [s], Maximum simulation time */
 real dt = 0.1;     /* [s], Time step */
+real Nt = tMax / dt;
 
 /* Mesh definition */
-int n = 15;
+int n = 10;
 real[int] xP = [0.0, L, L, 0.0];
 real[int] yP = [0, 0, H, H];
 int[int] nGamma = [L/L, 2.0 * H/L, L/L, 2.0 * H/L] * n;
@@ -103,35 +108,52 @@ problem NavierStocks([Ux, Uy, p], [Vx, Vy, q]) =
     )
     + int2d(Th)(
         dt * g * rho(phi) * Vy
-        -rho(phi) * [convect([UOldx, UOldy], -dt, UOldx), convect([UOldx, UOldy], -dt, UOldy)]' * [Vx, Vy]
+        - rho(phi) * [convect([UOldx, UOldy], -dt, UOldx), convect([UOldx, UOldy], -dt, UOldy)]' * [Vx, Vy]
     )
     + on(labelBottom, labelTop, Ux = UTopBottomx, Uy = UTopBottomy)
     + on(labelLeft, labelRight, Ux = URightLeftx);
 
 
-real chkm ; /* Quality of the worst element in the mesh */
-real epsilonChek = 1e-10; /* Minimum authorized quality for an element in the mesh */
+int[int] order = [1];
 
-while(t < tMax){
+ofstream ftimestep ( "./MapIterToTimeStep.pvd" );
+ftimestep << "<VTKFile type=\"Collection\" version=\"0.1\" byte_order=\"LittleEndian\">" << endl;
+ftimestep << "   <Collection>" << endl;
+
+for(int iter = 0; iter < Nt; ++iter){
 
     phi = convect([UOldx, UOldy], -dt, phiOld);
     NavierStocks;
 
-    chkm = checkmovemesh(Th,[x + dt * Ux, y + dt * Uy]);
+    Vh2 h = Heavyside(phi);
 
-    if(chkm > epsilonChek){
-        Th = movemesh(Th,[x + dt * Ux, y + dt * Uy]);
-        Th = adaptmesh(Th, hmin = 0.01, hmax = 0.01);
-    }else{
-        cout << "Problem" <<endl;
-    }
+    Th = adaptmesh(Th, h,
+        err = 0.1,
+        nbvx = 100000,
+        hmin = 0.01,
+        hmax = 0.1,
+        iso = true
+    );
+
+    plot(Th, h, fill = 1, value = 1);
+
+    Vh1 hP = h;
+
+    savevtk( ".\\output\\gamma_" + iter + ".vtu",
+        Th,
+        dataname = "Gamma",
+        h,
+        order = order
+    );
+
+    ftimestep << "      <DataSet timestep=\"" + t + "\" file='.\\output\\gamma_" + iter + ".vtu'/>" << endl;
 
     UOldx = Ux;
     UOldy = Uy;
     phiOld = phi;
+
     t += dt;
-
-    Vh2 h = Heavyside(phi);
-    plot(h, fill = 1, value = 1);
-
 }
+
+ftimestep << "   </Collection>" << endl;
+ftimestep << "</VTKFile >" << endl;
