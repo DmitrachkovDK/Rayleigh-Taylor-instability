@@ -1,0 +1,259 @@
+load "iovtk"
+system("mkdir .\\output\\");
+
+/* Domain geometry */
+real L = 1.0;       /* [m], Length */
+real H = 2.0*L;     /* [m], Heigth */
+real r = 0.25;      /* [m], Initial bubble radius */
+real x0 = 0.5*L;    /* [m], Coordinates of bubble center*/
+real y0 = 0.5*L;    /* [m], Coordinates of bubble center*/
+
+int case = 1;
+/* Physical parameters */
+real rho1 = 1e3;    /* [kg/m^3], Density of the surrounding fluid */
+real rho2 = 1e2;    /* [kg/m^3], Density of the bubble fluid, rho2 < rho1 */
+real mu1 = 1e1;     /* [Pa*s], Dynamic viscosity of the surrounding fluid */
+real mu2 = 1e0;     /* [Pa*s], Dynamic viscosity of bubble fluid*/
+real g = 0.98;      /* [m/s^2], Gravitational acceleration */
+real sigma = 24.5;  /* [N/m], Surface tension coefficient */
+
+if(case == 2){
+    rho1 = 1e3;
+    rho2 = 1e0;
+    mu1 = 1e1;
+    mu2 = 1e-1;
+    g = 0.98;
+    sigma = 1.96;
+}
+
+cout << "case " << case << ": Re = " << (rho1*(2.0*r)^(1.5)*sqrt(g))/mu1 <<
+", Eo = " << ((2.0*r)^2*g*rho1)/sigma << endl;
+
+/* Time discretization */
+real t = 0.0;       /* [s], Time */
+real tMax = 1.0;   /* [s], Maximum simulation time */
+real dt = 0.05;      /* [s], Time step */
+int Nt = int(tMax/dt) + 1;
+
+/* Adaptation parameters */
+real error = 0.1;
+int vertices = 100000;
+real hMin = 0.01;
+real hMax = 0.05;
+bool isIso = true;
+int adaptFreq = 1;
+
+/* Initial conditions */
+real Ux0 = 0.0;      /* [m/s], Initial velocity */
+real Uy0 = 0.0;      /* [m/s], Initial velocity */
+/* Initial interface surface */
+func phi0 = (x - x0)^2 + (y - y0)^2 - r^2; 
+
+/* Boundary conditions */
+real UTopBottomx = 0.0;
+real UTopBottomy = 0.0;
+real URightLeftx = 0.0;
+
+/* Regularization parameter */
+real epsilon = 1e-8;    /* Regularization parameter for continuity equation */
+real epsilonH = 0.025;  /* Regularization parameter for Heavyside function */
+
+/* Function definition */
+func real Heavyside(real phi){
+    if(phi < -epsilonH){
+        return 0.0;
+    }else if(phi > epsilonH){
+        return 1.0;
+    }else{
+        return 0.5*(1.0 + phi/epsilonH + 1.0/pi*sin(pi*phi/epsilonH));
+    }
+}
+
+func real dHdphi(real t) {
+    if(abs(t) > epsilonH)
+        return 0.0;
+    else
+        return 0.5*(1.0 + cos(pi*t/epsilonH))/epsilonH;
+}
+
+func real rho(real phi){
+    return rho2 + (rho1 - rho2)*Heavyside(phi);
+}
+
+func real mu(real phi){
+    return mu2 + (mu1 - mu2)*Heavyside(phi);
+}
+
+/* Mesh definition */
+int NN = 20;
+real[int] xP = [0.0, L, L, 0.0];
+real[int] yP = [0, 0, H, H];
+int[int] nGamma = [L/L, H/L, L/L, H/L]*NN;
+
+int labelBottom = 1;
+int labelRight = 2;
+int labelTop = 3;
+int labelLeft = 4;
+int[int] labelGamma = [
+    labelBottom, labelRight,
+    labelTop, labelLeft
+];
+
+border GammaDomain(t = 0.0, 1.0; i){
+    int iNext = (i + 1)%nGamma.n;
+    real t1 = 1.0 - t;
+    x = xP[i]*t1 + xP[iNext]*t;
+    y = yP[i]*t1 + yP[iNext]*t;
+    label = labelGamma[i];
+}
+
+mesh Th = buildmesh(GammaDomain(nGamma));
+
+/* Differential operators */
+macro grad(u) [dx(u), dy(u)] // EOM
+macro Grad(U) [grad(U#x), grad(U#y)] // EOM
+macro div(U) (dx(U#x) + dy(U#y)) //EOM
+
+/* Surface tension */
+/*macro ConvolutionTensor(PHI)[
+    [dx(PHI)*dx(PHI), dx(PHI)*dy(PHI)],
+    [dy(PHI)*dx(PHI), dy(PHI)*dy(PHI)]
+]// EOM
+macro Tension(PHI)sigma*dHdphi(PHI)*
+    (
+        [[1.0, 0.0],
+         [0.0, 1.0]]
+        - ConvolutionTensor(PHI)
+    )// EOM*/
+macro Tension(PHI)sigma*dHdphi(PHI)*
+    (
+        [
+            [1.0 - dx(PHI)*dx(PHI), -dx(PHI)*dy(PHI)],
+            [-dy(PHI)*dx(PHI), 1.0 - dy(PHI)*dy(PHI)]
+        ]
+    )// EOM
+
+macro Update(VAL){real[int] tempval(VAL[].n);
+tempval = VAL[];
+VAL = 0.0;
+VAL[] = tempval;}// EOM
+
+/* Fespace definition */
+fespace Vh2(Th, P2);
+fespace Vh1(Th, P1);
+
+Vh2 Ux, Uy, UOldx, UOldy, Vx, Vy;
+Vh1 p, q;
+Vh2 phi, phiOld; /* Surface interface */
+
+UOldx = Ux0;
+UOldy = Uy0;
+phiOld = phi0;
+
+problem NavierStocks([Ux, Uy, p], [Vx, Vy, q]) =
+    int2d(Th)(
+        /* Transport equation */
+        rho(phi)*[Ux, Uy]' * [Vx, Vy]
+        + dt*mu(phi)*(Grad(U) : Grad(V))
+        - dt*p*div(V)
+        /* Continuity equation */
+        - epsilon*p*q /* Penalty stabilization term */
+        - q*div(U)
+    )
+    + int2d(Th)(
+        dt*g*rho(phi)*Vy
+        - rho(phi)
+        *[
+            convect([UOldx, UOldy], -dt, UOldx),
+            convect([UOldx, UOldy], -dt, UOldy)
+        ]' * [Vx, Vy]
+        /* Surface tension */
+        - dt*(Tension(phi) : Grad(V))
+    )
+    + on(labelBottom, labelTop, Ux = UTopBottomx, Uy = UTopBottomy)
+    + on(labelLeft, labelRight, Ux = URightLeftx);
+
+int[int] order = [1];
+
+ofstream ftimestep ( "./MapIterToTimeStep.pvd" );
+ftimestep << "<VTKFile type=\"Collection\" version=\"0.1\" byte_order=\"LittleEndian\">" << endl;
+ftimestep << "   <Collection>" << endl;
+
+Vh2 h0 = Heavyside(phiOld);
+Th = adaptmesh(Th, h0,
+        err = error,
+        nbvx = vertices,
+        hmin = hMin,
+        hmax = hMax,
+        iso = isIso
+    );
+phiOld = phi0;
+phi = phiOld;
+UOldx = UOldx;
+UOldy = UOldy;
+h0 = Heavyside(phiOld);
+plot(Th, h0, fill=1, value=1, cmm="t = " + t);
+
+for(int iter = 0; t <= Nt; ++iter){
+    /*phi = convect([UOldx, UOldy], -dt, phiOld);*/
+    real tau = dt;
+    real minArea = checkmovemesh(Th, [x + tau*UOldx, y + tau*UOldy]);
+    while(minArea <= 0.0){
+        tau *= 0.8;
+        minArea = checkmovemesh(Th, [x + tau*UOldx, y + tau*UOldy]);
+    }
+    cout << "tau = " + tau << endl;
+    mesh Th = movemesh(Th, [x + tau*UOldx, y + tau*UOldy]);
+    Update(Ux);
+    Update(Uy);
+    Update(p);
+    Update(Vx);
+    Update(Vy);
+    Update(q);
+    Update(UOldx);
+    Update(UOldy);
+    Update(phi);
+    Update(phiOld);
+    
+    NavierStocks;
+    
+    Vh2 h = Heavyside(phi);
+
+    /* Mesh adaptation */
+    if(iter%adaptFreq == 0) {
+        Th = adaptmesh(Th, h,
+        err = error,
+        nbvx = vertices,
+        hmin = hMin,
+        hmax = hMax,
+        iso = isIso
+    );
+    phi = phi;
+    Ux = Ux;
+    Uy = Uy;
+    p = p;
+    h = h;
+    }
+
+    plot(Th, h, fill=1, value=1, cmm="t = " + t);
+
+    Vh1 hP = h;
+
+    savevtk( ".\\output\\gamma_" + iter + ".vtu",
+        Th,
+        dataname = "Gamma",
+        h,
+        order = order
+    );
+
+    ftimestep << "      <DataSet timestep=\"" + t + "\" file='.\\output\\gamma_" + iter + ".vtu'/>" << endl;
+
+    UOldx = Ux;
+    UOldy = Uy;
+    phiOld = phi;
+
+    t += tau;
+}
+
+ftimestep << "   </Collection>" << endl;
+ftimestep << "</VTKFile >" << endl;

@@ -1,0 +1,75 @@
+//------------------------------------------------------
+        stationaryBehavior
+    Run "RT_Instability_AtRe.edp" with these parameters:
+/* Domain geometry */
+real L = 1.0;       /* [m], Length */
+real H = 4.0*L;     /* [m], Heigth */
+
+/* Physical parameters */
+real rho1 = 1e3;    /* [kg/m^3], Density of first fluid, rho1 < rho2 */
+real rho2 = 3e3;    /* [kg/m^3], Density of second fluid */
+real mu1 = 1e0;     /* [Pa*s], Dynamic viscosity of first fluid */
+real mu2 = 1e0;     /* [Pa*s], Dynamic viscosity of second fluid*/
+real g = 1.0;       /* [m/s^2], Gravitational acceleration */
+real At = 0.5;      /* Atwood number */
+real Re = 1000.0;   /* Reunolds number */
+
+/* Time discretization */
+real t = 0.0;       /* [s], Time */
+real tMax = 60.0;   /* [s], Maximum simulation time */
+real dt = 0.3;      /* [s], Time step */
+int Nt = int(tMax/dt) + 1;
+
+real epsilonH = 0.05;
+
+/* Adaptation parameters */
+real error = 0.1;
+int vertices = 100000;
+real hMin = 0.02;
+real hMax = 0.05;
+bool isIso = true;
+int adaptFreq = 1;
+
+/* Mesh definition */
+int NN = 10;
+real[int] xP = [0.0, L, L, 0.0];
+real[int] yP = [0, 0, H, H];
+int[int] nGamma = [L/L, 4.0*H/L, L/L, 4.0*H/L]*NN;
+
+//------------------------------------------------------
+        sinVortex
+    Run "RT_Instability_AtRe.edp" with these parameters:
+/* Domain geometry */
+real L = 1.0;       /* [m], Length */
+real H = 4.0*L;     /* [m], Heigth */
+
+/* Physical parameters */
+real rho1 = 1e3;    /* [kg/m^3], Density of first fluid, rho1 < rho2 */
+real rho2 = 3e3;    /* [kg/m^3], Density of second fluid */
+real mu1 = 1e0;     /* [Pa*s], Dynamic viscosity of first fluid */
+real mu2 = 1e0;     /* [Pa*s], Dynamic viscosity of second fluid*/
+real g = 1.0;       /* [m/s^2], Gravitational acceleration */
+real At = 0.1;      /* Atwood number */
+real Re = 500.0;    /* Reunolds number */
+
+/* Time discretization */
+real t = 0.0;       /* [s], Time */
+real tMax = 120.0;   /* [s], Maximum simulation time */
+real dt = 1.0;      /* [s], Time step */
+int Nt = int(tMax/dt) + 1;
+
+real epsilonH = 0.05;
+
+/* Adaptation parameters */
+real error = 0.1;
+int vertices = 100000;
+real hMin = 0.02;
+real hMax = 0.05;
+bool isIso = true;
+int adaptFreq = 1;
+
+/* Mesh definition */
+int NN = 10;
+real[int] xP = [0.0, L, L, 0.0];
+real[int] yP = [0, 0, H, H];
+int[int] nGamma = [L/L, 4.0*H/L, L/L, 4.0*H/L]*NN;

@@ -3,3 +3,6 @@ input/
 output/
 .ipynb_checkpoints/
 *.pvd
+*.mp4
+sinVortex/
+stationaryBehavior/
