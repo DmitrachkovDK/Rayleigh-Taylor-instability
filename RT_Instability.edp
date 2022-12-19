@@ -2,13 +2,13 @@ load "iovtk"
 system("mkdir .\\output\\");
 
 /* Domain geometry */
-real L = 1.0;       /* [m], Length */
-real H = 3 * L;       /* [m], Heigth */
+real L = 7.0;       /* [m], Length */
+real H = 4.0;       /* [m], Heigth */
 
 /* Physical parameters */
 /* Atwood = (rho2 - rho1)/(rho2 + rho1) ~ 0.5 */
-real rho1 = 3;//0.5e3;      /* [kg/m^3], Density of first fluid, rho1 < rho2 */
-real rho2 = 1;//1.5e3;        /* [kg/m^3], Density of second fluid */
+real rho1 = 3.0;                  /* [kg/m^3], Density of first fluid, rho1 < rho2 */
+real rho2 = 1.0;                  /* [kg/m^3], Density of second fluid */
 real mu1 = 1e-3;                /* [Pa*s], Dynamic viscosity of first fluid */
 real mu2 = 1e-3;                /* [Pa*s], Dynamic viscosity of second fluid*/
 real g = 9.81;                  /* [m/s^2], Gravitational acceleration */
@@ -16,7 +16,7 @@ real g = 9.81;                  /* [m/s^2], Gravitational acceleration */
 /* Start condition */
 real Ux0 = 0.0;      /* [m/s], Initial velocity */
 real Uy0 = 0.0;      /* [m/s], Initial velocity */
-func phi0 = 1.5 + 0.2 * cos(0.5 * pi + pi * x) - y;//tanh(100 * (y - 2.0 - 0.1 * cos(2 * pi * x))/sqrt(2.0)); /* Initial interface surface */
+func phi0 = 2.0 + 0.2 * cos(0.5 * pi + pi * x) - y; /* Initial interface surface */
 
 /* Boundary condition */
 real UTopBottomx = 0.0;
@@ -24,8 +24,8 @@ real UTopBottomy = 0.0;
 real URightLeftx = 0.0;
 
 /* Regularization parameter */
-real epsilon = 1e-8;//1e-10;    /* Regularization parameter for continuity equation */
-real epsilonH = 0.05; /* Regularization parameter for Heavyside function*/
+real epsilon = 1e-10;           /* Regularization parameter for continuity equation */
+real epsilonH = 0.05;           /* Regularization parameter for Heavyside function*/
 
 /* Function definition */
 func real Heavyside(real phi){
@@ -48,12 +48,12 @@ func real mu(real phi){
 
 /* Time discretization */
 real t = 0.0;      /* [s], Time */
-real tMax = 2.0;  /* [s], Maximum simulation time */
-real dt = 0.1;     /* [s], Time step */
+real tMax = 3.0;  /* [s], Maximum simulation time */
+real dt = 0.01;     /* [s], Time step */
 real Nt = tMax / dt;
 
 /* Mesh definition */
-int n = 10;
+int n = 75;
 real[int] xP = [0.0, L, L, 0.0];
 real[int] yP = [0, 0, H, H];
 int[int] nGamma = [L/L, 2.0 * H/L, L/L, 2.0 * H/L] * n;
@@ -120,7 +120,7 @@ ofstream ftimestep ( "./MapIterToTimeStep.pvd" );
 ftimestep << "<VTKFile type=\"Collection\" version=\"0.1\" byte_order=\"LittleEndian\">" << endl;
 ftimestep << "   <Collection>" << endl;
 
-for(int iter = 0; iter < Nt; ++iter){
+for(int iter = 0; iter < Nt*0; ++iter){
 
     phi = convect([UOldx, UOldy], -dt, phiOld);
     NavierStocks;
@@ -135,7 +135,7 @@ for(int iter = 0; iter < Nt; ++iter){
         iso = true
     );
 
-    plot(Th, h, fill = 1, value = 1);
+    //plot(Th, h, fill = 1, value = 1);
 
     Vh1 hP = h;
 
