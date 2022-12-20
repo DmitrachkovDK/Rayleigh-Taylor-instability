@@ -1,5 +1,5 @@
 load "iovtk"
-system("mkdir .\\output\\");
+system("mkdir .\\output_atwood\\");
 
 /* Domain geometry */
 real L = 1.0;       /* [m], Length */
@@ -7,16 +7,22 @@ real H = 3 * L;       /* [m], Heigth */
 
 /* Physical parameters */
 /* Atwood = (rho2 - rho1)/(rho2 + rho1) ~ 0.5 */
-real rho1 = 3;//0.5e3;      /* [kg/m^3], Density of first fluid, rho1 < rho2 */
-real rho2 = 1;//1.5e3;        /* [kg/m^3], Density of second fluid */
-real mu1 = 1e-3;                /* [Pa*s], Dynamic viscosity of first fluid */
-real mu2 = 1e-3;                /* [Pa*s], Dynamic viscosity of second fluid*/
-real g = 9.81;                  /* [m/s^2], Gravitational acceleration */
+real rho1 = 3.0;                          /* [kg/m^3], Density of first fluid, rho2 > rho1 */
+real rho2 = 1.0;                  /* [kg/m^3], Density of second fluid */
+real mu1 = 1e-3;                      /* [Pa*s], Dynamic viscosity of first fluid */
+real mu2 = 1e-3;               /* [Pa*s], Dynamic viscosity of second fluid*/
+real g = 0.981;                        /* [m/s^2], Gravitational acceleration */
+real sigma = 72.86e-3;                    /* [N/m], Surface tension coefficient */
+
+real a = 0.3;
+real b = 0.3;
 
 /* Start condition */
 real Ux0 = 0.0;      /* [m/s], Initial velocity */
 real Uy0 = 0.0;      /* [m/s], Initial velocity */
-func phi0 = 1.5 + 0.2 * cos(0.5 * pi + pi * x) - y;//tanh(100 * (y - 2.0 - 0.1 * cos(2 * pi * x))/sqrt(2.0)); /* Initial interface surface */
+func phi0 = 1.5 + 0.2 * cos(0.5 * pi + pi * x) - y; /* Initial interface surface */
+
+//((x - 0.5 * L) / a)^2 + ((y - 0.5 * H) / b)^2 - 1;
 
 /* Boundary condition */
 real UTopBottomx = 0.0;
@@ -24,8 +30,8 @@ real UTopBottomy = 0.0;
 real URightLeftx = 0.0;
 
 /* Regularization parameter */
-real epsilon = 1e-8;//1e-10;    /* Regularization parameter for continuity equation */
-real epsilonH = 0.05; /* Regularization parameter for Heavyside function*/
+real epsilon = 1e-8;            /* Regularization parameter for continuity equation */
+real epsilonH = 0.05;           /* Regularization parameter for Heavyside function*/
 
 /* Function definition */
 func real Heavyside(real phi){
@@ -38,6 +44,13 @@ func real Heavyside(real phi){
     }
 }
 
+func real dHdphi(real phi) {
+    if(abs(phi) > epsilonH)
+        return 0.0;
+    else
+        return 0.5 / epsilonH * (1.0 + cos(pi * phi / epsilonH));
+}
+
 func real rho(real phi){
     return rho1 + (rho2 - rho1) * Heavyside(phi);
 }
@@ -48,7 +61,7 @@ func real mu(real phi){
 
 /* Time discretization */
 real t = 0.0;      /* [s], Time */
-real tMax = 2.0;  /* [s], Maximum simulation time */
+real tMax = 3.0;  /* [s], Maximum simulation time */
 real dt = 0.1;     /* [s], Time step */
 real Nt = tMax / dt;
 
@@ -78,11 +91,17 @@ border GammaDomain(t = 0.0, 1.0; i){
 mesh Th = buildmesh(GammaDomain(nGamma));
 
 /* Differential operators */
-macro grad(u) [dx(u), dy(u)] // EOM
+macro grad(u) [dx(u), dy(u)] //EOM
 
-macro Grad(U) [grad(U#x), grad(U#y)] // EOM
+macro Grad(U) [grad(U#x), grad(U#y)] //EOM
 
 macro div(U) (dx(U#x) + dy(U#y)) //EOM
+
+/* Surface tension tensor */
+macro Tension(phi, dxPhi, dyPhi, normPhi) sigma * dHdphi(phi) * [
+    [1.0 - dxPhi * dxPhi / normPhi, - dxPhi * dyPhi / normPhi],
+    [- dyPhi * dxPhi / normPhi, 1.0 - dyPhi * dyPhi / normPhi]
+] //EOM
 
 /* Fespace definition */
 fespace Vh2(Th,P2);
@@ -90,7 +109,8 @@ fespace Vh1(Th,P1);
 
 Vh2 Ux, Uy, UOldx, UOldy, Vx, Vy; /* Velocity and test fucntion */
 Vh1 p, q; /* Pressure and test fucntion */
-Vh2 phi, phiOld; /* Surface interface */
+Vh2 phi, phiOld, dxPhi, dyPhi; /* Surface interface */
+Vh2 normPhi;
 
 UOldx = Ux0;
 UOldy = Uy0;
@@ -107,8 +127,14 @@ problem NavierStocks([Ux, Uy, p], [Vx, Vy, q]) =
         - q * div(U)
     )
     + int2d(Th)(
+        /* Gravitation */
         dt * g * rho(phi) * Vy
-        - rho(phi) * [convect([UOldx, UOldy], -dt, UOldx), convect([UOldx, UOldy], -dt, UOldy)]' * [Vx, Vy]
+        - rho(phi) * [
+            convect([UOldx, UOldy], -dt, UOldx),
+            convect([UOldx, UOldy], -dt, UOldy)
+        ]' * [Vx, Vy]
+        /* Surface tension */
+        //- dt * (Tension(phi, dxPhi, dyPhi, normPhi) : Grad(V))
     )
     + on(labelBottom, labelTop, Ux = UTopBottomx, Uy = UTopBottomy)
     + on(labelLeft, labelRight, Ux = URightLeftx);
@@ -116,41 +142,54 @@ problem NavierStocks([Ux, Uy, p], [Vx, Vy, q]) =
 
 int[int] order = [1];
 
-ofstream ftimestep ( "./MapIterToTimeStep.pvd" );
+
+ofstream ftimestep ( "./MapIterToTimeStep50.pvd" );
 ftimestep << "<VTKFile type=\"Collection\" version=\"0.1\" byte_order=\"LittleEndian\">" << endl;
 ftimestep << "   <Collection>" << endl;
 
+
 for(int iter = 0; iter < Nt; ++iter){
 
-    phi = convect([UOldx, UOldy], -dt, phiOld);
+    /*phi = convect([UOldx, UOldy], -dt, phiOld);
+    //dxPhi = dx(phi);
+    //dyPhi = dy(phi);
+    //normPhi = (dxPhi^2 + dyPhi^2);
     NavierStocks;
 
     Vh2 h = Heavyside(phi);
 
     Th = adaptmesh(Th, h,
-        err = 0.1,
+        err = 0.01,
         nbvx = 100000,
         hmin = 0.01,
         hmax = 0.1,
         iso = true
-    );
+    );*/
 
-    plot(Th, h, fill = 1, value = 1);
+    /*phi = phi;
+    phiOld = phiOld;
+    Ux = Ux;
+    Uy = Uy;
+    UOldx = UOldx;
+    UOldy = UOldy;
+    p = p;
 
-    Vh1 hP = h;
+    //plot(Th, h, fill = 1, value = 1);
 
-    savevtk( ".\\output\\gamma_" + iter + ".vtu",
+    Vh1 hP = h;*/
+
+    /*savevtk( ".\\output_atwood_25\\gamma_" + iter + ".vtu",
         Th,
         dataname = "Gamma",
         h,
         order = order
-    );
+    );*/
 
-    ftimestep << "      <DataSet timestep=\"" + t + "\" file='.\\output\\gamma_" + iter + ".vtu'/>" << endl;
+    ftimestep << "      <DataSet timestep=\"" + t + "\" file='.\\output_atwood_50\\gamma_" + iter + ".vtu'/>" << endl;
 
-    UOldx = Ux;
-    UOldy = Uy;
-    phiOld = phi;
+    //UOldx = Ux;
+    //UOldy = Uy;
+    //phiOld = phi;
 
     t += dt;
 }
