@@ -1,0 +1,22 @@
+bubble1:
+	rho1 = 1e3;
+	rho2 = 1e2;
+	20 sec
+
+bubble2:
+	rho1 = 1e3;
+	rho2 = 4e2;
+	20 sec
+
+bubble3:
+	rho1 = 1e3;
+	rho2 = 7e2;
+	20 sec
+
+fourLayers:
+	Atwood 0.5
+	10 sec
+
+square 1, 2:
+	Atwood 0.3
+	20 sec
